@@ -1,0 +1,15 @@
+# Never commit private app data or signing credentials
+*.jks
+*.keystore
+*.p12
+*.pfx
+*Signing-Password*
+*signing-password*
+*.db
+*.sqlite
+*.sqlite3
+*.bak
+*.backup
+*.key
+
+# Public distribution only: signed releases belong under uploads/
