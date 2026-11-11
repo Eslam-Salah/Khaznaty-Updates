@@ -1,0 +1,67 @@
+name: Publish verified Khaznaty APK
+
+on:
+  push:
+    paths:
+      - 'uploads/Khaznaty-*-Release-SIGNED.apk'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: khaznaty-release-publisher
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: android-actions/setup-android@v4
+      - name: Install APK verification tools
+        run: sdkmanager 'build-tools;36.0.0'
+      - name: Validate signed APK and notes
+        id: check
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          apks=(uploads/Khaznaty-*-Release-SIGNED.apk)
+          test "${#apks[@]}" -gt 0 || { echo "::error::Upload a signed APK into uploads/"; exit 1; }
+          selected="$(printf '%s\n' "${apks[@]}" | sort -V | tail -1)"
+          version="$(basename "$selected" | sed -E 's/^Khaznaty-(.*)-Release-SIGNED\.apk$/\1/')"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 1
+          tag="v$version"
+          notes="release-notes/$tag.md"
+          test -s "$notes" || { echo "::error::Missing $notes"; exit 1; }
+          tools="$ANDROID_SDK_ROOT/build-tools/36.0.0"
+          signature="$("$tools/apksigner" verify --verbose --print-certs "$selected")"
+          grep -Fq 'Verified using v2 scheme (APK Signature Scheme v2): true' <<< "$signature"
+          grep -Fq 'Signer #1 certificate SHA-256 digest: e343eddaab55ddfd76b40665712c3b87642be0d473ecaa670331b0a9fa08e018' <<< "$signature"
+          info="$("$tools/aapt" dump badging "$selected")"
+          grep -Eq "package: name='com\.khaznaty\.vault' versionCode='[0-9]+' versionName='$version'" <<< "$info"
+          if [[ "$version" == "1.0.2" ]]; then
+            echo "5430a9a8338218ab0019b40480e0ede442c8adb31d0ae13e912b028665d72d31  $selected" | sha256sum --check
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "asset=$selected" >> "$GITHUB_OUTPUT"
+          echo "notes=$notes" >> "$GITHUB_OUTPUT"
+      - name: Publish GitHub Release and signed APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.check.outputs.tag }}
+          APK: ${{ steps.check.outputs.asset }}
+          NOTES: ${{ steps.check.outputs.notes }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$APK" --clobber
+            gh release edit "$TAG" --notes-file "$NOTES" --latest
+          else
+            gh release create "$TAG" "$APK" --target "$GITHUB_SHA" --title "Khaznaty $TAG" --notes-file "$NOTES" --latest
+          fi
+          gh release view "$TAG" --json tagName,url,assets
+          count="$(gh release view "$TAG" --json assets --jq '[.assets[] | select(.name | endswith(".apk"))] | length')"
+          test "$count" -ge 1
