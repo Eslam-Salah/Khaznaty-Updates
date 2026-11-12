@@ -1,9 +1,10 @@
-name: Publish verified Khaznaty APK
+name: Publish official Khaznaty signed APK
 
 on:
   push:
     paths:
       - 'uploads/Khaznaty-*-Release-SIGNED.apk'
+      - '.github/workflows/publish-apk.yml'
   workflow_dispatch:
 
 permissions:
@@ -30,13 +31,8 @@ jobs:
           shopt -s nullglob
           apks=(uploads/Khaznaty-*-Release-SIGNED.apk)
           test "${#apks[@]}" -gt 0 || { echo "::error::Upload a signed APK into uploads/"; exit 1; }
-          # During the public version reset, prefer v1.0.0 over previous preview builds.
-          # After old assets are deleted, future versions sort normally again.
-          if [[ -f "uploads/Khaznaty-1.0.0-Release-SIGNED.apk" && -f "uploads/Khaznaty-1.0.5-Release-SIGNED.apk" ]]; then
-            selected="uploads/Khaznaty-1.0.0-Release-SIGNED.apk"
-          else
-            selected="$(printf '%s\n' "${apks[@]}" | sort -V | tail -1)"
-          fi
+          # Only official signed releases are stored here; pick the latest semantic version.
+          selected="$(printf '%s\n' "${apks[@]}" | sort -V | tail -1)"
           version="$(basename "$selected" | sed -E 's/^Khaznaty-(.*)-Release-SIGNED\.apk$/\1/')"
           [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 1
           tag="v$version"
@@ -51,9 +47,6 @@ jobs:
           if [[ "$version" == "1.0.0" ]]; then
             grep -Fq "versionCode='1' versionName='1.0.0'" <<< "$info"
             echo "af9710208b0af8f7b26b9e1a9eef9ea55fc20488b2d93b9c991878c486b85726  $selected" | sha256sum --check
-          fi
-          if [[ "$version" == "1.0.2" ]]; then
-            echo "5430a9a8338218ab0019b40480e0ede442c8adb31d0ae13e912b028665d72d31  $selected" | sha256sum --check
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "asset=$selected" >> "$GITHUB_OUTPUT"
@@ -75,34 +68,4 @@ jobs:
           gh release view "$TAG" --json tagName,url,assets
           count="$(gh release view "$TAG" --json assets --jq '[.assets[] | select(.name | endswith(".apk"))] | length')"
           test "$count" -ge 1
-
-      - name: Retire previous preview releases after first official release is confirmed
-        if: ${{ success() && steps.check.outputs.tag == 'v1.0.0' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          # The official v1.0.0 release must be published with its APK first.
-          gh release view v1.0.0 --json assets --jq '[.assets[] | select(.name == "Khaznaty-1.0.0-Release-SIGNED.apk")] | length' | grep -qx '1'
-          for old in v1.0.2 v1.0.4 v1.0.5; do
-            if gh release view "$old" >/dev/null 2>&1; then
-              gh release delete "$old" --yes --cleanup-tag
-              echo "Removed preview release: $old"
-            fi
-          done
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          for old in 1.0.2 1.0.4 1.0.5; do
-            [[ ! -f "uploads/Khaznaty-$old-Release-SIGNED.apk" ]] ||
-              git rm -- "uploads/Khaznaty-$old-Release-SIGNED.apk"
-            [[ ! -f "release-notes/v$old.md" ]] ||
-              git rm -- "release-notes/v$old.md"
-          done
-          if ! git diff --cached --quiet; then
-            git commit -m "Retire preview releases after official 1.0.0 reset"
-            git push origin HEAD:main
-          fi
-          gh release edit v1.0.0 --latest
-          echo "Official v1.0.0 is the only published release; old uploads removed from main."
 
