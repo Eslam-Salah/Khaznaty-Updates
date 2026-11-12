@@ -50,6 +50,7 @@ jobs:
           grep -Eq "package: name='com\.khaznaty\.vault' versionCode='[0-9]+' versionName='$version'" <<< "$info"
           if [[ "$version" == "1.0.0" ]]; then
             grep -Fq "versionCode='1' versionName='1.0.0'" <<< "$info"
+            echo "af9710208b0af8f7b26b9e1a9eef9ea55fc20488b2d93b9c991878c486b85726  $selected" | sha256sum --check
           fi
           if [[ "$version" == "1.0.2" ]]; then
             echo "5430a9a8338218ab0019b40480e0ede442c8adb31d0ae13e912b028665d72d31  $selected" | sha256sum --check
